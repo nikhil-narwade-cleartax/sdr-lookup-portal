@@ -29,27 +29,45 @@ const searchCompanies = async (query) => {
   return response.json()
 }
 
-const checkPeppolRegistration = async (siren) => {
+const checkPeppolRegistration = async (siren, companyName) => {
   try {
-    // Try with SIREN (0002 scheme)
-    const response = await fetch(
-      `https://directory.peppol.eu/search/1.0/json?participant=iso6523-actorid-upis::0002:${siren}`
-    )
-    if (response.ok) {
-      const data = await response.json()
-      if (data.matches && data.matches.length > 0) {
-        return { registered: true, data: data.matches[0] }
+    // French companies use scheme 0225 (France test/prod) or 0002 (SIREN)
+    // Best approach: search by SIREN in multiple schemes
+
+    const schemes = ['0225', '0002', '0009']
+
+    for (const scheme of schemes) {
+      const response = await fetch(
+        `https://directory.peppol.eu/search/1.0/json?participant=iso6523-actorid-upis::${scheme}:${siren}`
+      )
+      if (response.ok) {
+        const data = await response.json()
+        if (data.matches && data.matches.length > 0) {
+          return { registered: true, data: data.matches[0], scheme }
+        }
       }
     }
 
-    // Try with French scheme (0009 - SIRET)
-    const response2 = await fetch(
-      `https://directory.peppol.eu/search/1.0/json?participant=iso6523-actorid-upis::0009:${siren}`
-    )
-    if (response2.ok) {
-      const data2 = await response2.json()
-      if (data2.matches && data2.matches.length > 0) {
-        return { registered: true, data: data2.matches[0] }
+    // Fallback: Search by company name and check if SIREN matches
+    if (companyName) {
+      const nameQuery = companyName.split(' ')[0] // Use first word of company name
+      const response = await fetch(
+        `https://directory.peppol.eu/search/1.0/json?name=${encodeURIComponent(nameQuery)}&country=FR`
+      )
+      if (response.ok) {
+        const data = await response.json()
+        if (data.matches && data.matches.length > 0) {
+          // Check if any match contains our SIREN
+          const match = data.matches.find(m => {
+            const participantValue = m.participantID?.value || ''
+            const identifiers = m.entities?.[0]?.identifiers || []
+            return participantValue.includes(siren) ||
+                   identifiers.some(id => id.value?.includes(siren))
+          })
+          if (match) {
+            return { registered: true, data: match, scheme: 'name-search' }
+          }
+        }
       }
     }
 
@@ -235,7 +253,7 @@ const CompanyCard = ({ company, peppolStatus, onCheckPeppol, isChecking }) => {
       <div className="px-6 pb-6 flex gap-3">
         {!peppolStatus && (
           <button
-            onClick={() => onCheckPeppol(company.siren)}
+            onClick={() => onCheckPeppol(company.siren, company.nom_complet || company.nom_raison_sociale)}
             disabled={isChecking}
             className="flex-1 flex items-center justify-center gap-2 px-4 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-xl font-medium hover:from-blue-700 hover:to-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-sm"
           >
@@ -306,11 +324,11 @@ function App() {
     }
   }
 
-  const handleCheckPeppol = async (siren) => {
+  const handleCheckPeppol = async (siren, companyName) => {
     setCheckingPeppol(prev => ({ ...prev, [siren]: true }))
 
     try {
-      const result = await checkPeppolRegistration(siren)
+      const result = await checkPeppolRegistration(siren, companyName)
       setPeppolStatuses(prev => ({ ...prev, [siren]: result }))
 
       // Update stats
@@ -329,7 +347,7 @@ function App() {
   const checkAllCompanies = async () => {
     for (const company of results) {
       if (!peppolStatuses[company.siren]) {
-        await handleCheckPeppol(company.siren)
+        await handleCheckPeppol(company.siren, company.nom_complet || company.nom_raison_sociale)
         // Small delay to avoid rate limiting
         await new Promise(resolve => setTimeout(resolve, 500))
       }
