@@ -29,17 +29,18 @@ const searchCompanies = async (query) => {
   return response.json()
 }
 
+// CORS proxy for PEPPOL Directory API (doesn't support CORS)
+const CORS_PROXY = 'https://corsproxy.io/?'
+
 const checkPeppolRegistration = async (siren, companyName) => {
   try {
     // French companies use scheme 0225 (France test/prod) or 0002 (SIREN)
-    // Best approach: search by SIREN in multiple schemes
-
     const schemes = ['0225', '0002', '0009']
 
     for (const scheme of schemes) {
-      const response = await fetch(
-        `https://directory.peppol.eu/search/1.0/json?participant=iso6523-actorid-upis::${scheme}:${siren}`
-      )
+      const peppolUrl = `https://directory.peppol.eu/search/1.0/json?participant=iso6523-actorid-upis::${scheme}:${siren}`
+      const response = await fetch(CORS_PROXY + encodeURIComponent(peppolUrl))
+
       if (response.ok) {
         const data = await response.json()
         if (data.matches && data.matches.length > 0) {
@@ -50,14 +51,13 @@ const checkPeppolRegistration = async (siren, companyName) => {
 
     // Fallback: Search by company name and check if SIREN matches
     if (companyName) {
-      const nameQuery = companyName.split(' ')[0] // Use first word of company name
-      const response = await fetch(
-        `https://directory.peppol.eu/search/1.0/json?name=${encodeURIComponent(nameQuery)}&country=FR`
-      )
+      const nameQuery = companyName.split(' ')[0]
+      const peppolUrl = `https://directory.peppol.eu/search/1.0/json?name=${encodeURIComponent(nameQuery)}&country=FR`
+      const response = await fetch(CORS_PROXY + encodeURIComponent(peppolUrl))
+
       if (response.ok) {
         const data = await response.json()
         if (data.matches && data.matches.length > 0) {
-          // Check if any match contains our SIREN
           const match = data.matches.find(m => {
             const participantValue = m.participantID?.value || ''
             const identifiers = m.entities?.[0]?.identifiers || []
